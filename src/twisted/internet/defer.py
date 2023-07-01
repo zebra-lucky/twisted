@@ -13,7 +13,7 @@ import inspect
 import traceback
 import warnings
 from abc import ABC, abstractmethod
-from asyncio import AbstractEventLoop, Future, iscoroutine
+from asyncio import AbstractEventLoop, Future, iscoroutine, isfuture
 from contextvars import Context as _Context, copy_context as _copy_context
 from enum import Enum
 from functools import wraps
@@ -2085,9 +2085,19 @@ def _inlineCallbacks(
             status.deferred.callback(callbackValue)
             return
 
+        if isfuture(result) and not result.done():
+            result = Deferred.fromFuture(result)
+
         if isinstance(result, Deferred):
             # a deferred was yielded, get the result.
-            result.addBoth(_gotResultInlineCallbacks, waiting, gen, status, context)
+            def gotResult(r: object) -> None:
+                if waiting[0]:
+                    waiting[0] = False
+                    waiting[1] = r
+                else:
+                    _inlineCallbacks(r, gen, status, context)
+
+            result.addBoth(gotResult)
             if waiting[0]:
                 # Haven't called back yet, set flag so that we get reinvoked
                 # and return from the loop
